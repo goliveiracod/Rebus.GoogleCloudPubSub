@@ -2,17 +2,28 @@ version: "3"
 
 services:
   pubsub:
-    image: fardog/gcloud-pubsub-emulator
-    entrypoint: ["/google-cloud-sdk/platform/pubsub-emulator/bin/cloud-pubsub-emulator", "--host=0.0.0.0", "--port=8085", "--project=dummypubsubproject"]
+    image: messagebird/gcloud-pubsub-emulator:latest
     ports:
-      - '8085:8085'
+      - "8333:8681"
+    environment:
+      - PUBSUB_PROJECT1=emulator,sender:sender
+    volumes:
+      - /data
+    networks:
+      - test-net
 
   tests:
     build: .
     environment:
-      - PUBSUB_EMULATOR_HOST=pubsub:8085
+      - PUBSUB_EMULATOR_HOST=pubsub:8681
       - PUBSUB_PROJECT_ID=emulator
     volumes:
       - ./:/tmp/testresults.host
     depends_on:
       - pubsub
+    networks:
+      - test-net
+
+networks:
+  test-net:
+    driver: bridge
