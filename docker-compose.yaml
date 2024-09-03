@@ -9,8 +9,6 @@ services:
       - PUBSUB_PROJECT1=emulator,sender:sender
     volumes:
       - /data
-    networks:
-      - test-net
 
   tests:
     build: .
@@ -21,9 +19,3 @@ services:
       - ./:/tmp/testresults.host
     depends_on:
       - pubsub
-    networks:
-      - test-net
-
-networks:
-  test-net:
-    driver: bridge

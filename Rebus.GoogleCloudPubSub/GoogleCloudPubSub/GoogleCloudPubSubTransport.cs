@@ -13,6 +13,7 @@ using Rebus.Exceptions;
 using Rebus.GoogleCloudPubSub.Messages;
 using Rebus.Logging;
 using Rebus.Messages;
+using Rebus.Threading;
 using Rebus.Transport;
 
 namespace Rebus.GoogleCloudPubSub;
@@ -21,6 +22,8 @@ public class GoogleCloudPubSubTransport : AbstractRebusTransport, IInitializable
 {
     private readonly ConcurrentDictionary<string, Lazy<Task<PublisherClient>>> _clients = new();
     private readonly string _inputQueueName;
+    private readonly IAsyncTask _leaseRenewalTimer;
+    private readonly ConcurrentDictionary<string, MessageLeaseRenewer> _leaseRenewers = new();
     private readonly IMessageConverter _messageConverter;
     private readonly string _projectId;
     protected readonly ILog Log;
@@ -29,19 +32,22 @@ public class GoogleCloudPubSubTransport : AbstractRebusTransport, IInitializable
     private SubscriberServiceApiClient _subscriberClient;
     private SubscriptionName _subscriptionName;
 
-
     public GoogleCloudPubSubTransport(string projectId, string inputQueueName, IRebusLoggerFactory rebusLoggerFactory,
-        IMessageConverter messageConverter) : base(inputQueueName)
+        IAsyncTaskFactory asyncTaskFactory,
+        IMessageConverter messageConverter, TimeSpan? leaseExtensionInterval = null) : base(inputQueueName)
     {
         _projectId = projectId ?? throw new ArgumentNullException(nameof(projectId));
         _inputQueueName = inputQueueName;
         if (rebusLoggerFactory == null) throw new ArgumentNullException(nameof(rebusLoggerFactory));
+        if (asyncTaskFactory == null) throw new ArgumentNullException(nameof(asyncTaskFactory));
         Log = rebusLoggerFactory.GetLogger<GoogleCloudPubSubTransport>();
         _messageConverter = messageConverter ?? throw new ArgumentNullException(nameof(messageConverter));
+        _leaseRenewalTimer = asyncTaskFactory.Create("Lease Renewal", RenewLeases, true, intervalSeconds: 2);
     }
 
     public void Dispose()
     {
+        _leaseRenewalTimer.Dispose();
     }
 
     public void Initialize()
@@ -52,6 +58,38 @@ public class GoogleCloudPubSubTransport : AbstractRebusTransport, IInitializable
             CreateQueue(_inputQueueName);
             AsyncHelpers.RunSync(CreateSubscriptionAsync);
         }
+        
+        // _leaseRenewalTimer.Start();
+    }
+
+    private async Task RenewLeases()
+    {
+        var leaseRenewer = _leaseRenewers
+            .Where(r => r.Value.IsDue)
+            .Select(kvp => kvp.Value)
+            .ToList();
+
+        if (!leaseRenewer.Any()) return;
+
+        Log.Debug("Identified {count} message leases that are due for renewal to prevent expiration",
+            leaseRenewer.Count);
+
+        await Task.WhenAll(leaseRenewer.Select(async messageLeaseRenewer =>
+        {
+            try
+            {
+                await messageLeaseRenewer.RenewAsync().ConfigureAwait(false);
+
+                Log.Debug("Successfully renewed lease for message with ID {messageId}", messageLeaseRenewer.MessageId);
+            }
+            catch (Exception ex)
+            {
+                if (!_leaseRenewers.ContainsKey(messageLeaseRenewer.ReceivedMessage.Message.MessageId)) return;
+
+                Log.Warn(ex, "Error when renewing lease for message with ID {messageId}",
+                    messageLeaseRenewer.MessageId);
+            }
+        }));
     }
 
     private async Task<PublisherServiceApiClient> GetPublisherServiceApiClientAsync()
@@ -193,15 +231,19 @@ public class GoogleCloudPubSubTransport : AbstractRebusTransport, IInitializable
             return null;
         }
 
+        var leaseRenewer = new MessageLeaseRenewer(receivedMessage, _subscriberClient, _subscriptionName);
+        _leaseRenewers.TryAdd(receivedMessage.Message.MessageId, leaseRenewer);
 
         context.OnAck(async ctx =>
         {
             await _subscriberClient.AcknowledgeAsync(_subscriptionName, new[] { receivedMessage.AckId });
+            _leaseRenewers.TryRemove(receivedTransportMessage.Headers[Headers.MessageId], out _);
         });
 
         context.OnNack(async ctx =>
         {
             await _subscriberClient.ModifyAckDeadlineAsync(_subscriptionName, new[] { receivedMessage.AckId }, 0);
+            _leaseRenewers.TryRemove(receivedTransportMessage.Headers[Headers.MessageId], out _);
         });
 
         return receivedTransportMessage;
