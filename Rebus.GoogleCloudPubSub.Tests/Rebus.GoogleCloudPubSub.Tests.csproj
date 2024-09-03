@@ -1,8 +1,8 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
-  <PropertyGroup>
-    <TargetFramework>net7.0</TargetFramework>
-  </PropertyGroup>
+    <PropertyGroup>
+        <TargetFramework>net7.0</TargetFramework>
+    </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="6.0.2">
@@ -18,14 +18,14 @@
     
   </ItemGroup>
 
-  <ItemGroup>
-    <ProjectReference Include="..\Rebus.GoogleCloudPubSub\Rebus.GoogleCloudPubSub.csproj" />
-  </ItemGroup>
+    <ItemGroup>
+        <ProjectReference Include="..\Rebus.GoogleCloudPubSub\Rebus.GoogleCloudPubSub.csproj"/>
+    </ItemGroup>
 
-  <ItemGroup>
-    <None Update="google-cloud-credentials.json">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
+    <ItemGroup>
+        <None Update="google-cloud-credentials.json">
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </None>
+    </ItemGroup>
 
 </Project>
